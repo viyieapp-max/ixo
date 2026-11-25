@@ -1,0 +1,6 @@
+{
+  "name": "KasBuku — Pembukuan Keuangan & Google Sheets",
+  "description": "Aplikasi pencatatan pengeluaran, pemasukan, manajemen saldo, grafik arus kas, ekspor PDF/Excel, dan sinkronisasi Google Sheets.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
