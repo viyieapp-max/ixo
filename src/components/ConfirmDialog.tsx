@@ -46,7 +46,7 @@ export function ConfirmDialog({
             exit={{ opacity: 0 }}
             transition={{ duration: 0.16 }}
             onClick={() => !isLoading && onCancel()}
-            className="fixed inset-0 bg-black/70 backdrop-blur-xs"
+            className="fixed inset-0 bg-[#0D0303]/80 backdrop-blur-xs"
           />
 
           <motion.div
@@ -57,22 +57,22 @@ export function ConfirmDialog({
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.96, y: 16 }}
             transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-            className="relative z-10 w-full max-w-md rounded-t-3xl sm:rounded-2xl bg-[#161920] border border-white/10 p-5 sm:p-6 text-slate-100 shadow-2xl max-h-[90dvh] overflow-y-auto"
+            className="relative z-10 w-full max-w-md rounded-t-3xl sm:rounded-2xl bg-[#150A0B] border border-[#EFF8FF]/12 p-5 sm:p-6 text-[#EFF8FF] shadow-2xl max-h-[90dvh] overflow-y-auto"
           >
             <div className="flex items-start justify-between gap-4">
               <div className="flex items-center gap-3">
                 <div
                   className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
                     tone === 'danger'
-                      ? 'bg-red-500/15 text-red-400'
-                      : 'bg-[#97F017]/15 text-[#97F017]'
+                      ? 'bg-[#FF0055]/15 text-[#FF0055]'
+                      : 'bg-[#BBEF1F]/15 text-[#BBEF1F]'
                   }`}
                 >
                   <AlertTriangle className="w-5 h-5" aria-hidden="true" />
                 </div>
                 <h3
                   id="confirm-dialog-title"
-                  className="font-display text-lg font-bold text-white"
+                  className="font-display text-lg font-bold text-[#EFF8FF]"
                 >
                   {title}
                 </h3>
@@ -82,18 +82,18 @@ export function ConfirmDialog({
                 onClick={onCancel}
                 disabled={isLoading}
                 aria-label="Tutup dialog konfirmasi"
-                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
+                className="p-1.5 rounded-lg text-[#EFF8FF]/60 hover:text-[#EFF8FF] hover:bg-[#EFF8FF]/5 transition-colors cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <p className="mt-3 text-sm leading-relaxed text-slate-300">
+            <p className="mt-3 text-sm leading-relaxed text-[#EFF8FF]/80">
               {description}
             </p>
 
             {details.length > 0 && (
-              <ul className="mt-3 space-y-1.5 rounded-xl bg-[#0E1117] border border-white/[0.06] p-3 text-xs text-slate-300">
+              <ul className="mt-3 space-y-1.5 rounded-xl bg-[#0D0303] border border-[#EFF8FF]/[0.08] p-3 text-xs text-[#EFF8FF]/75">
                 {details.map((item, idx) => (
                   <li key={idx} className="leading-relaxed">
                     {item}
@@ -107,7 +107,7 @@ export function ConfirmDialog({
                 type="button"
                 onClick={onCancel}
                 disabled={isLoading}
-                className="w-full sm:w-auto min-h-[44px] px-4 py-2.5 rounded-xl text-xs font-semibold text-slate-300 bg-white/5 hover:bg-white/10 transition-colors cursor-pointer whitespace-nowrap"
+                className="w-full sm:w-auto min-h-[44px] px-4 py-2.5 rounded-xl text-xs font-semibold text-[#EFF8FF]/80 bg-[#1E1012] hover:bg-[#291619] transition-colors cursor-pointer whitespace-nowrap"
               >
                 {cancelLabel}
               </button>
@@ -117,8 +117,8 @@ export function ConfirmDialog({
                 disabled={isLoading}
                 className={`w-full sm:w-auto min-h-[44px] px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
                   tone === 'danger'
-                    ? 'bg-red-500 hover:bg-red-600 text-white'
-                    : 'bg-[#97F017] hover:bg-[#8CE615] text-[#0B0D12]'
+                    ? 'bg-[#FF0055] hover:bg-[#E0004B] text-[#EFF8FF]'
+                    : 'bg-[#BBEF1F] hover:bg-[#AEE018] text-[#0D0303]'
                 } disabled:opacity-60`}
               >
                 {isLoading ? 'Memproses...' : confirmLabel}

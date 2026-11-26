@@ -26,15 +26,13 @@ export interface BalanceLog {
   createdAt: string;
 }
 
+export type MainNavKey = 'grafik' | 'tabel' | 'akun' | 'personalisasi';
+
 export interface FinanceStoreState {
   brandName: string;
   baseBalance: number;
   transactions: Transaction[];
   balanceLogs: BalanceLog[];
-  spreadsheetId: string;
-  spreadsheetTitle: string;
-  sheetTabName: string;
-  lastSyncedAt: string | null;
 }
 
 export interface ChartBucket {

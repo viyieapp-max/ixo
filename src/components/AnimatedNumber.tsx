@@ -9,27 +9,28 @@ interface AnimatedNumberProps {
 
 export function AnimatedNumber({ value, className = '' }: AnimatedNumberProps) {
   const [displayValue, setDisplayValue] = useState(value);
-  const prevValueRef = useRef(value);
+  const currentValueRef = useRef(value);
 
   useEffect(() => {
-    const from = prevValueRef.current;
+    const from = currentValueRef.current;
     if (from === value) return;
 
     const controls = animate(from, value, {
       duration: 0.55,
       ease: [0.16, 1, 0.3, 1],
       onUpdate: (latest) => {
-        setDisplayValue(Math.round(latest));
+        const rounded = Math.round(latest);
+        currentValueRef.current = rounded;
+        setDisplayValue(rounded);
       },
       onComplete: () => {
-        prevValueRef.current = value;
+        currentValueRef.current = value;
         setDisplayValue(value);
       },
     });
 
     return () => {
       controls.stop();
-      prevValueRef.current = value;
     };
   }, [value]);
 

@@ -59,63 +59,63 @@ export function CashflowCharts({
     <section
       id="grafik"
       aria-label="Grafik Pemasukan dan Pengeluaran"
-      className="scroll-mt-4 md:scroll-mt-24 max-w-[1380px] mx-auto px-4 sm:px-8 pb-6 sm:pb-8"
+      className="scroll-mt-4 md:scroll-mt-8 max-w-[1380px] mx-auto px-4 sm:px-8 pb-6 sm:pb-8"
     >
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-5">
-        {/* Left: Interactive Cashflow Bar + Trend Chart */}
-        <div className="lg:col-span-8 rounded-3xl sm:rounded-[28px] bg-[#161920] border border-white/[0.06] p-5 sm:p-7">
+        {/* Left: Interactive Cashflow Bar Chart */}
+        <div className="lg:col-span-8 rounded-3xl sm:rounded-[28px] bg-[#150A0B] border border-[#EFF8FF]/[0.08] p-5 sm:p-7">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5 sm:mb-6">
             <div>
-              <h2 className="font-display text-lg font-bold text-white">
+              <h2 className="font-display text-lg font-bold text-[#EFF8FF]">
                 Grafik Arus Kas ({rangeLabel})
               </h2>
-              <p className="text-xs text-slate-400 mt-0.5">
+              <p className="text-xs text-[#EFF8FF]/65 mt-0.5">
                 Perbandingan pemasukan dan pengeluaran secara kronologis
               </p>
             </div>
 
             <div className="flex items-center gap-5 text-xs">
-              <div className="flex items-center gap-2 text-slate-300">
-                <span className="w-2.5 h-2.5 rounded-xs bg-[#97F017]" aria-hidden="true" />
+              <div className="flex items-center gap-2 text-[#EFF8FF]/85">
+                <span className="w-2.5 h-2.5 rounded-xs bg-[#BBEF1F]" aria-hidden="true" />
                 <span>Pemasukan</span>
               </div>
-              <div className="flex items-center gap-2 text-slate-300">
-                <span className="w-2.5 h-2.5 rounded-xs bg-rose-400" aria-hidden="true" />
+              <div className="flex items-center gap-2 text-[#EFF8FF]/85">
+                <span className="w-2.5 h-2.5 rounded-xs bg-[#FF0055]" aria-hidden="true" />
                 <span>Pengeluaran</span>
               </div>
             </div>
           </div>
 
           {series.length === 0 ? (
-            <div className="h-[200px] sm:h-[230px] flex flex-col items-center justify-center text-center rounded-2xl bg-[#0E1117] border border-white/[0.05] p-5 sm:p-6">
-              <BarChart3 className="w-8 h-8 text-slate-500 mb-2" aria-hidden="true" />
-              <p className="text-sm font-medium text-slate-300">
+            <div className="h-[200px] sm:h-[230px] flex flex-col items-center justify-center text-center rounded-2xl bg-[#0D0303] border border-[#EFF8FF]/[0.07] p-5 sm:p-6">
+              <BarChart3 className="w-8 h-8 text-[#EFF8FF]/45 mb-2" aria-hidden="true" />
+              <p className="text-sm font-medium text-[#EFF8FF]/85">
                 Belum ada data grafik
               </p>
-              <p className="text-xs text-slate-500 mt-1">
-                Hubungkan Google Sheets atau catat transaksi untuk melihat visualisasi arus kas.
+              <p className="text-xs text-[#EFF8FF]/55 mt-1">
+                Catat transaksi baru atau buka menu Tabel Keuangan untuk melihat visualisasi arus kas.
               </p>
             </div>
           ) : (
             <div className="relative">
               {/* Hover / Tap Summary Readout */}
-              <div className="min-h-[36px] mb-3 px-3.5 py-2 rounded-xl bg-[#0E1117] border border-white/[0.06] flex flex-wrap items-center justify-between gap-2 text-xs">
+              <div className="min-h-[36px] mb-3 px-3.5 py-2 rounded-xl bg-[#0D0303] border border-[#EFF8FF]/[0.08] flex flex-wrap items-center justify-between gap-2 text-xs">
                 {activeBucket ? (
                   <>
-                    <span className="font-semibold text-white">
+                    <span className="font-semibold text-[#EFF8FF]">
                       {activeBucket.label}
                     </span>
                     <div className="flex items-center gap-3 sm:gap-4 font-mono-nums">
-                      <span className="text-[#97F017]">
+                      <span className="text-[#BBEF1F]">
                         Masuk: {formatRupiah(activeBucket.income)}
                       </span>
-                      <span className="text-rose-400">
+                      <span className="text-[#FF0055]">
                         Keluar: {formatRupiah(activeBucket.expense)}
                       </span>
                     </div>
                   </>
                 ) : (
-                  <span className="text-slate-400">
+                  <span className="text-[#EFF8FF]/60">
                     Ketuk atau arahkan kursor ke batang grafik untuk rincian nominal
                   </span>
                 )}
@@ -146,7 +146,7 @@ export function CashflowCharts({
                         bucket.income
                       )}, Pengeluaran ${formatRupiah(bucket.expense)}`}
                       className={`flex-1 min-w-[44px] flex flex-col items-center gap-2 rounded-xl px-1.5 py-2 transition-colors outline-none cursor-pointer ${
-                        isHovered ? 'bg-white/[0.04]' : ''
+                        isHovered ? 'bg-[#EFF8FF]/[0.05]' : ''
                       }`}
                     >
                       <div className="h-[160px] w-full flex items-end justify-center gap-1.5">
@@ -162,7 +162,7 @@ export function CashflowCharts({
                             height: `${incHeight}px`,
                             transformOrigin: 'bottom',
                           }}
-                          className="w-3 sm:w-4 rounded-t-md bg-[#97F017]"
+                          className="w-3 sm:w-4 rounded-t-md bg-[#BBEF1F]"
                         />
                         <motion.div
                           initial={{ scaleY: 0 }}
@@ -176,10 +176,10 @@ export function CashflowCharts({
                             height: `${expHeight}px`,
                             transformOrigin: 'bottom',
                           }}
-                          className="w-3 sm:w-4 rounded-t-md bg-rose-400"
+                          className="w-3 sm:w-4 rounded-t-md bg-[#FF0055]"
                         />
                       </div>
-                      <span className="text-[11px] font-mono-nums text-slate-400 whitespace-nowrap">
+                      <span className="text-[11px] font-mono-nums text-[#EFF8FF]/60 whitespace-nowrap">
                         {bucket.label}
                       </span>
                     </div>
@@ -191,18 +191,18 @@ export function CashflowCharts({
         </div>
 
         {/* Right: Category Spending Breakdown */}
-        <div className="lg:col-span-4 rounded-[28px] bg-[#161920] border border-white/[0.06] p-6 sm:p-7 flex flex-col justify-between">
+        <div className="lg:col-span-4 rounded-[28px] bg-[#150A0B] border border-[#EFF8FF]/[0.08] p-6 sm:p-7 flex flex-col justify-between">
           <div>
-            <h2 className="font-display text-lg font-bold text-white">
+            <h2 className="font-display text-lg font-bold text-[#EFF8FF]">
               Kategori Pengeluaran
             </h2>
-            <p className="text-xs text-slate-400 mt-0.5">
+            <p className="text-xs text-[#EFF8FF]/65 mt-0.5">
               Pos pengeluaran terbesar pada {rangeLabel}
             </p>
 
             {categoryBreakdown.items.length === 0 ? (
-              <div className="mt-8 text-center py-10 rounded-2xl bg-[#0E1117] border border-white/[0.05]">
-                <p className="text-xs text-slate-400">
+              <div className="mt-8 text-center py-10 rounded-2xl bg-[#0D0303] border border-[#EFF8FF]/[0.07]">
+                <p className="text-xs text-[#EFF8FF]/60">
                   Belum ada pengeluaran pada periode ini.
                 </p>
               </div>
@@ -211,15 +211,15 @@ export function CashflowCharts({
                 {categoryBreakdown.items.map((cat, idx) => (
                   <div key={cat.name} className="space-y-1.5">
                     <div className="flex items-center justify-between text-xs">
-                      <span className="font-medium text-slate-200 truncate pr-2">
+                      <span className="font-medium text-[#EFF8FF]/90 truncate pr-2">
                         {cat.name}
                       </span>
-                      <span className="font-mono-nums text-slate-300 shrink-0">
+                      <span className="font-mono-nums text-[#EFF8FF]/80 shrink-0">
                         {formatRupiah(cat.amount)}{' '}
-                        <span className="text-slate-500">({cat.percent}%)</span>
+                        <span className="text-[#EFF8FF]/45">({cat.percent}%)</span>
                       </span>
                     </div>
-                    <div className="h-2 w-full rounded-full bg-[#0E1117] overflow-hidden">
+                    <div className="h-2 w-full rounded-full bg-[#0D0303] overflow-hidden">
                       <motion.div
                         initial={{ width: 0 }}
                         animate={{ width: `${Math.max(cat.percent, 4)}%` }}
@@ -229,7 +229,7 @@ export function CashflowCharts({
                           ease: [0.16, 1, 0.3, 1],
                         }}
                         className={`h-full rounded-full ${
-                          idx === 0 ? 'bg-[#97F017]' : 'bg-slate-400'
+                          idx === 0 ? 'bg-[#FF0055]' : 'bg-[#BBEF1F]'
                         }`}
                       />
                     </div>
@@ -239,9 +239,9 @@ export function CashflowCharts({
             )}
           </div>
 
-          <div className="mt-6 pt-4 border-t border-white/[0.06] flex items-center justify-between text-xs">
-            <span className="text-slate-400">Total Terkategori</span>
-            <span className="font-mono-nums font-bold text-white">
+          <div className="mt-6 pt-4 border-t border-[#EFF8FF]/[0.08] flex items-center justify-between text-xs">
+            <span className="text-[#EFF8FF]/60">Total Terkategori</span>
+            <span className="font-mono-nums font-bold text-[#EFF8FF]">
               {formatRupiah(categoryBreakdown.totalExp)}
             </span>
           </div>

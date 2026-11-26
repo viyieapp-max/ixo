@@ -6,9 +6,5 @@ export function createInitialFinanceState(): FinanceStoreState {
     baseBalance: 0,
     transactions: [],
     balanceLogs: [],
-    spreadsheetId: '',
-    spreadsheetTitle: '',
-    sheetTabName: 'Transaksi',
-    lastSyncedAt: null,
   };
 }

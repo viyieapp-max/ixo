@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { User } from 'firebase/auth';
 import { AnimatePresence, motion } from 'motion/react';
 import { CheckCircle2 } from 'lucide-react';
@@ -6,6 +6,7 @@ import type {
   BalanceActionType,
   BalanceLog,
   FinanceStoreState,
+  MainNavKey,
   TimeRangeKey,
   Transaction,
   TransactionType,
@@ -22,86 +23,73 @@ import {
 import { createInitialFinanceState } from './data/seedData';
 import { exportReportToExcel, exportReportToPDF } from './utils/exportReport';
 import {
-  ensureSheetsAccessToken,
-  getAccessToken,
   getSavedAccountMeta,
   googleSignIn,
   initAuth,
   logoutGoogle,
-  markSheetsConsentRevoked,
   type SavedAccountMeta,
 } from './services/googleAuth';
 import {
-  InsufficientScopeError,
-  createFinanceSpreadsheet,
-  fetchSpreadsheetMeta,
-  readTransactionsFromSheet,
-  writeTransactionsToSheet,
-} from './services/googleSheets';
+  hasMeaningfulFinanceData,
+  resolveUserInitialFinanceState,
+  saveUserLocalFinanceState,
+} from './services/userStorage';
+import {
+  loadUserFinanceFromSheet,
+  sanitizeBrandName,
+  saveUserFinanceToSheet,
+} from './services/sheetStorage';
+import { Sidebar } from './components/Sidebar';
 import { TopBar } from './components/TopBar';
 import { HeroOverview } from './components/HeroOverview';
 import { CashflowCharts } from './components/CashflowCharts';
 import { LedgerSheet } from './components/LedgerSheet';
-import { LainnyaSection, type LainnyaTabKey } from './components/LainnyaSection';
+import { AccountPanel } from './components/AccountPanel';
+import { PersonalizationPanel } from './components/PersonalizationPanel';
 import { BalanceModal } from './components/BalanceModal';
 import { TransactionModal } from './components/TransactionModal';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { MobileBottomNav } from './components/MobileBottomNav';
 
-const STORAGE_KEY = 'kasbuku_finance_state_v2';
+const SIDEBAR_COLLAPSED_KEY = 'kasbuku_sidebar_collapsed_v1';
 
-function loadInitialState(): FinanceStoreState {
-  try {
-    localStorage.removeItem('kasbuku_finance_state_v1');
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw) as Partial<FinanceStoreState>;
-      if (
-        typeof parsed.baseBalance === 'number' &&
-        Array.isArray(parsed.transactions) &&
-        Array.isArray(parsed.balanceLogs)
-      ) {
-        return {
-          brandName:
-            typeof parsed.brandName === 'string' && parsed.brandName.trim()
-              ? parsed.brandName.trim()
-              : 'KasBuku',
-          baseBalance: parsed.baseBalance,
-          transactions: parsed.transactions,
-          balanceLogs: parsed.balanceLogs,
-          spreadsheetId: parsed.spreadsheetId ?? '',
-          spreadsheetTitle: parsed.spreadsheetTitle ?? '',
-          sheetTabName: parsed.sheetTabName ?? 'Transaksi',
-          lastSyncedAt: parsed.lastSyncedAt ?? null,
-        };
-      }
-    }
-  } catch {
-    // Fallback to clean empty state
+function loadInitialStoreForSavedSession(): FinanceStoreState {
+  const saved = getSavedAccountMeta();
+  if (saved?.uid) {
+    return resolveUserInitialFinanceState(saved.uid);
   }
   return createInitialFinanceState();
 }
 
+function loadSidebarCollapsed(): boolean {
+  try {
+    return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
 export default function App() {
-  const [store, setStore] = useState<FinanceStoreState>(loadInitialState);
+  const [store, setStore] = useState<FinanceStoreState>(
+    loadInitialStoreForSavedSession
+  );
+  const storeRef = useRef<FinanceStoreState>(store);
+  storeRef.current = store;
+
+  const [activeMenu, setActiveMenu] = useState<MainNavKey>('grafik');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(
+    loadSidebarCollapsed
+  );
   const [activeRange, setActiveRange] = useState<TimeRangeKey>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [lainnyaTab, setLainnyaTab] = useState<LainnyaTabKey>('sheets');
 
-  // Auth & Google Sheets state
+  // Auth state (persisted via browserLocalPersistence + saved profile metadata)
   const [user, setUser] = useState<User | null>(null);
   const [savedAccount, setSavedAccount] = useState<SavedAccountMeta | null>(() =>
     getSavedAccountMeta()
   );
-  const [hasToken, setHasToken] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
-  const [availableTabs, setAvailableTabs] = useState<string[]>([
-    'Transaksi',
-    'RingkasanSaldo',
-  ]);
-  const [sheetsBusy, setSheetsBusy] = useState(false);
-  const [sheetsStatus, setSheetsStatus] = useState<string | null>(null);
-  const [sheetsError, setSheetsError] = useState<string | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
 
   // Modals
   const [balanceModalOpen, setBalanceModalOpen] = useState(false);
@@ -117,10 +105,10 @@ export default function App() {
   const [pendingDeleteTx, setPendingDeleteTx] = useState<Transaction | null>(
     null
   );
-  const [confirmSheetPushOpen, setConfirmSheetPushOpen] = useState(false);
 
   // Transient notification toast
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const sheetWarnedRef = useRef(false);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -132,30 +120,27 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [toastMessage]);
 
-  // Persist local state
+  const activeUid = user?.uid || savedAccount?.uid || '';
+  const activeEmail = user?.email || savedAccount?.email || '';
+  const isAuthenticated = Boolean(user || savedAccount);
+  const isLocked = !isAuthenticated;
+
+  // Persist per-user local cache (never deletes other users' storage)
+  useEffect(() => {
+    if (!isAuthenticated || !activeUid) return;
+    saveUserLocalFinanceState(activeUid, store);
+  }, [store, isAuthenticated, activeUid]);
+
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
+      localStorage.setItem(
+        SIDEBAR_COLLAPSED_KEY,
+        sidebarCollapsed ? 'true' : 'false'
+      );
     } catch {
       // Ignore storage quota issues
     }
-  }, [store]);
-
-  // Sync browser page title with personalized brandName
-  const displayBrand = store.brandName?.trim() || 'KasBuku';
-  useEffect(() => {
-    document.title = `${displayBrand} — Pembukuan Keuangan & Google Sheets`;
-  }, [displayBrand]);
-
-  // Firebase Auth listener (restores persistent user automatically on reload)
-  useEffect(() => {
-    const unsubscribe = initAuth((authedUser, token) => {
-      setUser(authedUser);
-      setHasToken(Boolean(token));
-      setSavedAccount(getSavedAccountMeta());
-    });
-    return () => unsubscribe();
-  }, []);
+  }, [sidebarCollapsed]);
 
   const activeProfile = useMemo(() => {
     if (user) {
@@ -175,12 +160,95 @@ export default function App() {
     return null;
   }, [user, savedAccount]);
 
+  // Enforce Rp0 & empty data whenever not logged in
+  const effectiveStore = useMemo<FinanceStoreState>(() => {
+    if (!isAuthenticated) {
+      return createInitialFinanceState();
+    }
+    return store;
+  }, [isAuthenticated, store]);
+
+  // Sync browser page title with personalized brandName
+  const displayBrand = effectiveStore.brandName?.trim() || 'KasBuku';
+  useEffect(() => {
+    document.title = `${displayBrand} — Pembukuan Keuangan & Manajemen Saldo`;
+  }, [displayBrand]);
+
+  // Auth listener (restores persistent user automatically on reload)
+  useEffect(() => {
+    const unsubscribe = initAuth((authedUser) => {
+      setUser(authedUser);
+      setSavedAccount(getSavedAccountMeta());
+      if (authedUser) {
+        setStore(resolveUserInitialFinanceState(authedUser.uid));
+      } else {
+        setStore(createInitialFinanceState());
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Load user's saved financial data from Google Apps Script Sheet on login/reload
+  useEffect(() => {
+    if (!isAuthenticated || !activeUid) return;
+    let cancelled = false;
+    const localSeed = resolveUserInitialFinanceState(activeUid);
+
+    void (async () => {
+      const res = await loadUserFinanceFromSheet(activeUid, activeEmail);
+      if (cancelled) return;
+
+      if (res.status === 'found') {
+        if (
+          hasMeaningfulFinanceData(res.data) ||
+          !hasMeaningfulFinanceData(localSeed)
+        ) {
+          setStore(res.data);
+          saveUserLocalFinanceState(activeUid, res.data);
+        } else {
+          // Local has existing data while Sheet row is empty -> sync up to Sheet
+          void saveUserFinanceToSheet(activeUid, activeEmail, localSeed);
+        }
+      } else if (res.status === 'not_found') {
+        void saveUserFinanceToSheet(activeUid, activeEmail, localSeed);
+      } else if (res.reason === 'script_not_ready' && !sheetWarnedRef.current) {
+        sheetWarnedRef.current = true;
+        setAuthError(
+          'Apps Script URL belum memiliki fungsi doGet/doPost yang di-deploy. Data tetap tersimpan sementara di perangkat ini.'
+        );
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthenticated, activeUid, activeEmail]);
+
+  const syncNextStateToSheet = (nextState: FinanceStoreState) => {
+    if (!activeUid) return;
+    saveUserLocalFinanceState(activeUid, nextState);
+    void saveUserFinanceToSheet(activeUid, activeEmail, nextState).then(
+      (res) => {
+        if (
+          res.status === 'error' &&
+          res.reason === 'script_not_ready' &&
+          !sheetWarnedRef.current
+        ) {
+          sheetWarnedRef.current = true;
+          setAuthError(
+            'Apps Script URL belum memiliki fungsi doGet/doPost yang di-deploy. Data tetap tersimpan sementara di perangkat ini.'
+          );
+        }
+      }
+    );
+  };
+
   const rangeLabel =
     TIME_RANGE_OPTIONS.find((opt) => opt.key === activeRange)?.label ?? 'All';
 
   const filteredTransactions = useMemo(
-    () => filterTransactionsByRange(store.transactions, activeRange),
-    [store.transactions, activeRange]
+    () => filterTransactionsByRange(effectiveStore.transactions, activeRange),
+    [effectiveStore.transactions, activeRange]
   );
 
   const summary = useMemo(
@@ -188,42 +256,54 @@ export default function App() {
     [filteredTransactions]
   );
 
-  const currentBalance = useMemo(
-    () =>
-      computeCurrentBalance(
-        store.baseBalance,
-        store.balanceLogs,
-        store.transactions
-      ),
-    [store.baseBalance, store.balanceLogs, store.transactions]
-  );
+  const currentBalance = useMemo(() => {
+    if (!isAuthenticated) return 0;
+    return computeCurrentBalance(
+      effectiveStore.baseBalance,
+      effectiveStore.balanceLogs,
+      effectiveStore.transactions
+    );
+  }, [
+    isAuthenticated,
+    effectiveStore.baseBalance,
+    effectiveStore.balanceLogs,
+    effectiveStore.transactions,
+  ]);
+
+  const handleSelectMenu = (menu: MainNavKey) => {
+    setActiveMenu(menu);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const requireAuthOrRedirect = (): boolean => {
+    if (isAuthenticated) return true;
+    setAuthError(
+      'Silakan masuk dengan Akun Google terlebih dahulu untuk menggunakan seluruh fitur.'
+    );
+    handleSelectMenu('akun');
+    showToast('Masuk dengan Akun Google untuk membuka semua fitur.');
+    return false;
+  };
 
   // Handlers: Auth
-  const handleGoogleLogin = async (
-    mode: 'auto' | 'resume' | 'consent' | 'select_account' = 'auto'
-  ) => {
+  const handleGoogleLogin = async (selectAccount = false) => {
     setIsLoggingIn(true);
-    setSheetsError(null);
-    setSheetsStatus(null);
+    setAuthError(null);
+    sheetWarnedRef.current = false;
     try {
-      const res = await googleSignIn({ mode });
-      if (res) {
-        setUser(res.user);
+      const signedInUser = await googleSignIn({ selectAccount });
+      if (signedInUser) {
+        setUser(signedInUser);
         setSavedAccount(getSavedAccountMeta());
-        if (!res.hasSheetsAccess) {
-          setHasToken(false);
-          setSheetsError(
-            'Izin Google Sheets belum dicentang pada layar persetujuan Google. Klik "Berikan Izin Google Sheets" lalu centang akses Google Sheets.'
-          );
-          return;
-        }
-        setHasToken(true);
-        showToast('Akun Google terhubung dan tersimpan.');
+        setStore(resolveUserInitialFinanceState(signedInUser.uid));
+        showToast('Akun Google berhasil masuk. Data akun Anda dimuat.');
       }
-    } catch (err: any) {
-      setSheetsError(
-        err?.message || 'Gagal masuk dengan Google. Silakan coba lagi.'
-      );
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : 'Gagal masuk dengan Google. Silakan coba lagi.';
+      setAuthError(message);
     } finally {
       setIsLoggingIn(false);
     }
@@ -231,21 +311,19 @@ export default function App() {
 
   const handleGoogleLogout = async () => {
     await logoutGoogle();
-    try {
-      localStorage.removeItem(STORAGE_KEY);
-    } catch {
-      // Ignore storage restrictions
-    }
+    // Only reset active session UI state; NEVER delete per-user, Sheet, or other users' storage
     setUser(null);
     setSavedAccount(null);
-    setHasToken(false);
     setStore(createInitialFinanceState());
     setActiveRange('all');
     setSearchQuery('');
-    setAvailableTabs(['Transaksi', 'RingkasanSaldo']);
-    setSheetsStatus(null);
-    setSheetsError(null);
-    showToast('Sesi akun keluar & seluruh data pembukuan direset ke Rp0.');
+    setBalanceModalOpen(false);
+    setTxModalOpen(false);
+    setPendingDeleteTx(null);
+    setAuthError(null);
+    showToast(
+      'Sesi akun keluar & tampilan direset ke Rp0. Data akun Anda tetap tersimpan.'
+    );
   };
 
   // Handlers: Transactions
@@ -257,13 +335,16 @@ export default function App() {
     type: TransactionType;
     amount: number;
   }) => {
+    if (!requireAuthOrRedirect()) return;
     const nowIso = new Date().toISOString();
+    const prev = storeRef.current;
 
     if (payload.id) {
-      setStore((prev) => ({
+      const targetId = payload.id;
+      const nextState: FinanceStoreState = {
         ...prev,
         transactions: prev.transactions.map((tx) =>
-          tx.id === payload.id
+          tx.id === targetId
             ? {
                 ...tx,
                 date: payload.date,
@@ -275,7 +356,9 @@ export default function App() {
               }
             : tx
         ),
-      }));
+      };
+      setStore(nextState);
+      syncNextStateToSheet(nextState);
       showToast(`Baris "${payload.description}" berhasil diperbarui.`);
     } else {
       const newTx: Transaction = {
@@ -288,10 +371,12 @@ export default function App() {
         createdAt: nowIso,
         updatedAt: nowIso,
       };
-      setStore((prev) => ({
+      const nextState: FinanceStoreState = {
         ...prev,
         transactions: [newTx, ...prev.transactions],
-      }));
+      };
+      setStore(nextState);
+      syncNextStateToSheet(nextState);
       showToast(
         `Transaksi "${payload.description}" (${formatRupiah(
           payload.amount
@@ -301,26 +386,31 @@ export default function App() {
   };
 
   const handleConfirmDeleteTransaction = () => {
-    if (!pendingDeleteTx) return;
+    if (!requireAuthOrRedirect() || !pendingDeleteTx) return;
+    const deletedId = pendingDeleteTx.id;
     const deletedName = pendingDeleteTx.description;
-    setStore((prev) => ({
+    const prev = storeRef.current;
+
+    const nextState: FinanceStoreState = {
       ...prev,
-      transactions: prev.transactions.filter(
-        (tx) => tx.id !== pendingDeleteTx.id
-      ),
-    }));
+      transactions: prev.transactions.filter((tx) => tx.id !== deletedId),
+    };
+    setStore(nextState);
     setPendingDeleteTx(null);
+    syncNextStateToSheet(nextState);
     showToast(`Transaksi "${deletedName}" dihapus.`);
   };
 
   // Handlers: Balance (Set Saldo, Add Saldo + Note, Edit Saldo)
   const handleOpenBalanceModal = (mode: BalanceActionType) => {
+    if (!requireAuthOrRedirect()) return;
     setEditingBalanceLog(null);
     setBalanceModalMode(mode);
     setBalanceModalOpen(true);
   };
 
   const handleEditBalanceLog = (log: BalanceLog) => {
+    if (!requireAuthOrRedirect()) return;
     setEditingBalanceLog(log);
     setBalanceModalMode(log.action);
     setBalanceModalOpen(true);
@@ -332,37 +422,38 @@ export default function App() {
     note: string;
     editingLogId?: string;
   }) => {
+    if (!requireAuthOrRedirect()) return;
     const nowIso = new Date().toISOString();
     const today = getTodayISODate();
+    const prev = storeRef.current;
+    const prevBal = computeCurrentBalance(
+      prev.baseBalance,
+      prev.balanceLogs,
+      prev.transactions
+    );
 
-    setStore((prev) => {
-      const prevBal = computeCurrentBalance(
-        prev.baseBalance,
-        prev.balanceLogs,
-        prev.transactions
+    let nextState: FinanceStoreState = prev;
+
+    if (payload.editingLogId) {
+      const targetLog = prev.balanceLogs.find(
+        (l) => l.id === payload.editingLogId
       );
+      if (!targetLog) return;
 
-      if (payload.editingLogId) {
-        const targetLog = prev.balanceLogs.find(
-          (l) => l.id === payload.editingLogId
+      if (targetLog.action === 'add') {
+        const resultingBalance = targetLog.previousBalance + payload.amount;
+        const updatedLogs = prev.balanceLogs.map((l) =>
+          l.id === targetLog.id
+            ? {
+                ...l,
+                amount: payload.amount,
+                note: payload.note,
+                resultingBalance,
+              }
+            : l
         );
-        if (!targetLog) return prev;
-
-        if (targetLog.action === 'add') {
-          const updatedLogs = prev.balanceLogs.map((l) =>
-            l.id === targetLog.id
-              ? {
-                  ...l,
-                  amount: payload.amount,
-                  note: payload.note,
-                  resultingBalance: l.previousBalance + payload.amount,
-                }
-              : l
-          );
-          return { ...prev, balanceLogs: updatedLogs };
-        }
-
-        // Editing a 'set' or 'edit' log updates the note and target balance
+        nextState = { ...prev, balanceLogs: updatedLogs };
+      } else {
         const updatedLogs = prev.balanceLogs.map((l) =>
           l.id === targetLog.id
             ? {
@@ -378,38 +469,35 @@ export default function App() {
           updatedLogs,
           prev.transactions
         );
-        return {
+        nextState = {
           ...prev,
           baseBalance: newBase,
           balanceLogs: updatedLogs,
         };
       }
-
-      if (payload.mode === 'add') {
-        const newLog: BalanceLog = {
-          id: `bal-${Date.now()}`,
-          action: 'add',
-          amount: payload.amount,
-          previousBalance: prevBal,
-          resultingBalance: prevBal + payload.amount,
-          note: payload.note,
-          date: today,
-          createdAt: nowIso,
-        };
-        return {
-          ...prev,
-          balanceLogs: [newLog, ...prev.balanceLogs],
-        };
-      }
-
-      // 'set' or 'edit' adjusts baseBalance so currentBalance == payload.amount
+    } else if (payload.mode === 'add') {
+      const newLog: BalanceLog = {
+        id: `bal-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+        action: 'add',
+        amount: payload.amount,
+        previousBalance: prevBal,
+        resultingBalance: prevBal + payload.amount,
+        note: payload.note,
+        date: today,
+        createdAt: nowIso,
+      };
+      nextState = {
+        ...prev,
+        balanceLogs: [newLog, ...prev.balanceLogs],
+      };
+    } else {
       const newBase = computeBaseBalanceForTarget(
         payload.amount,
         prev.balanceLogs,
         prev.transactions
       );
       const newLog: BalanceLog = {
-        id: `bal-${Date.now()}`,
+        id: `bal-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
         action: payload.mode,
         amount: payload.amount,
         previousBalance: prevBal,
@@ -418,12 +506,15 @@ export default function App() {
         date: today,
         createdAt: nowIso,
       };
-      return {
+      nextState = {
         ...prev,
         baseBalance: newBase,
         balanceLogs: [newLog, ...prev.balanceLogs],
       };
-    });
+    }
+
+    setStore(nextState);
+    syncNextStateToSheet(nextState);
 
     const label =
       payload.mode === 'add'
@@ -435,17 +526,23 @@ export default function App() {
   };
 
   const handleUpdateBrandName = (newBrandName: string) => {
-    const cleaned = newBrandName.trim() || 'KasBuku';
-    setStore((prev) => ({
+    if (!requireAuthOrRedirect()) return;
+    const cleaned = sanitizeBrandName(newBrandName);
+    const prev = storeRef.current;
+
+    const nextState: FinanceStoreState = {
       ...prev,
       brandName: cleaned,
-    }));
+    };
+    setStore(nextState);
+    syncNextStateToSheet(nextState);
     showToast(`Nama aplikasi diperbarui menjadi "${cleaned}".`);
   };
 
   // Handlers: Exports
   const handleExportExcel = () => {
-    exportReportToExcel(filteredTransactions, store.balanceLogs, {
+    if (!requireAuthOrRedirect()) return;
+    exportReportToExcel(filteredTransactions, effectiveStore.balanceLogs, {
       brandName: displayBrand,
       totalExpense: summary.totalExpense,
       totalIncome: summary.totalIncome,
@@ -457,6 +554,7 @@ export default function App() {
   };
 
   const handleExportPDF = () => {
+    if (!requireAuthOrRedirect()) return;
     exportReportToPDF(filteredTransactions, {
       brandName: displayBrand,
       totalExpense: summary.totalExpense,
@@ -468,267 +566,129 @@ export default function App() {
     showToast(`Laporan PDF (${rangeLabel}) berhasil diunduh.`);
   };
 
-  // Handlers: Google Sheets API (auto-resumes token when user session is saved)
-  const resolveSheetsToken = async (): Promise<string | null> => {
-    const existing = getAccessToken();
-    if (existing) return existing;
-    const resumed = await ensureSheetsAccessToken();
-    if (resumed) {
-      setHasToken(true);
-      setSavedAccount(getSavedAccountMeta());
-    }
-    return resumed;
-  };
-
-  const handleCreateSpreadsheet = async (title: string) => {
-    setSheetsBusy(true);
-    setSheetsError(null);
-    setSheetsStatus(null);
-    try {
-      const token = await resolveSheetsToken();
-      if (!token) {
-        setSheetsError('Silakan Sign in with Google terlebih dahulu.');
-        return;
-      }
-      const meta = await createFinanceSpreadsheet(token, title);
-      setAvailableTabs(meta.sheets);
-      setStore((prev) => ({
-        ...prev,
-        spreadsheetId: meta.spreadsheetId,
-        spreadsheetTitle: meta.title,
-        sheetTabName: meta.sheets[0] ?? 'Transaksi',
-      }));
-      setSheetsStatus(
-        `Spreadsheet "${meta.title}" berhasil dibuat. Klik "Sinkron ke Google Sheet" untuk mengirim data Anda.`
-      );
-    } catch (err: any) {
-      if (err instanceof InsufficientScopeError) {
-        markSheetsConsentRevoked();
-        setHasToken(false);
-      }
-      setSheetsError(err?.message || 'Gagal membuat Google Sheet.');
-    } finally {
-      setSheetsBusy(false);
-    }
-  };
-
-  const handleConnectSpreadsheet = async (idOrUrl: string) => {
-    setSheetsBusy(true);
-    setSheetsError(null);
-    setSheetsStatus(null);
-    try {
-      const token = await resolveSheetsToken();
-      if (!token) {
-        setSheetsError('Silakan Sign in with Google terlebih dahulu.');
-        return;
-      }
-      const meta = await fetchSpreadsheetMeta(token, idOrUrl);
-      setAvailableTabs(meta.sheets);
-      setStore((prev) => ({
-        ...prev,
-        spreadsheetId: meta.spreadsheetId,
-        spreadsheetTitle: meta.title,
-        sheetTabName: meta.sheets[0] ?? 'Transaksi',
-      }));
-      setSheetsStatus(
-        `Terhubung ke "${meta.title}" (${meta.sheets.length} tab ditemukan).`
-      );
-    } catch (err: any) {
-      if (err instanceof InsufficientScopeError) {
-        markSheetsConsentRevoked();
-        setHasToken(false);
-      }
-      setSheetsError(
-        err?.message || 'Gagal menghubungkan spreadsheet. Periksa URL atau ID.'
-      );
-    } finally {
-      setSheetsBusy(false);
-    }
-  };
-
-  const handlePullFromSheet = async () => {
-    if (!store.spreadsheetId) {
-      setSheetsError('Hubungkan spreadsheet terlebih dahulu.');
-      return;
-    }
-    setSheetsBusy(true);
-    setSheetsError(null);
-    setSheetsStatus(null);
-    try {
-      const token = await resolveSheetsToken();
-      if (!token) {
-        setSheetsError('Silakan Sign in with Google terlebih dahulu.');
-        return;
-      }
-      const rows = await readTransactionsFromSheet(
-        token,
-        store.spreadsheetId,
-        store.sheetTabName
-      );
-      if (rows.length === 0) {
-        setSheetsStatus(
-          `Tab "${store.sheetTabName}" belum memiliki baris transaksi.`
-        );
-      } else {
-        setStore((prev) => ({
-          ...prev,
-          transactions: rows,
-          lastSyncedAt: new Date().toISOString(),
-        }));
-        setSheetsStatus(
-          `Berhasil memuat ${rows.length} baris transaksi dari tab "${store.sheetTabName}".`
-        );
-        showToast(`${rows.length} transaksi dimuat dari Google Sheets.`);
-      }
-    } catch (err: any) {
-      if (err instanceof InsufficientScopeError) {
-        markSheetsConsentRevoked();
-        setHasToken(false);
-      }
-      setSheetsError(err?.message || 'Gagal membaca data dari Google Sheet.');
-    } finally {
-      setSheetsBusy(false);
-    }
-  };
-
-  const handleConfirmPushToSheet = async () => {
-    if (!store.spreadsheetId) {
-      setConfirmSheetPushOpen(false);
-      setSheetsError('Hubungkan spreadsheet terlebih dahulu.');
-      return;
-    }
-    setSheetsBusy(true);
-    setSheetsError(null);
-    setSheetsStatus(null);
-    try {
-      const token = await resolveSheetsToken();
-      if (!token) {
-        setConfirmSheetPushOpen(false);
-        setSheetsError('Silakan Sign in with Google terlebih dahulu.');
-        return;
-      }
-      await writeTransactionsToSheet(
-        token,
-        store.spreadsheetId,
-        store.sheetTabName,
-        store.transactions,
-        store.balanceLogs,
-        currentBalance,
-        availableTabs
-      );
-      const syncedAt = new Date().toISOString();
-      setStore((prev) => ({ ...prev, lastSyncedAt: syncedAt }));
-      setSheetsStatus(
-        `Berhasil menyinkronkan ${store.transactions.length} transaksi ke "${store.spreadsheetTitle}" (${store.sheetTabName}).`
-      );
-      showToast('Data berhasil disinkronkan ke Google Sheets.');
-    } catch (err: any) {
-      if (err instanceof InsufficientScopeError) {
-        markSheetsConsentRevoked();
-        setHasToken(false);
-      }
-      setSheetsError(err?.message || 'Gagal menulis data ke Google Sheet.');
-    } finally {
-      setSheetsBusy(false);
-      setConfirmSheetPushOpen(false);
-    }
-  };
-
   return (
-    <div className="min-h-screen bg-[#0B0D12] text-slate-100 flex flex-col">
-      <TopBar
+    <div className="min-h-screen bg-[#0D0303] text-[#EFF8FF] flex flex-col md:flex-row">
+      {/* Tab Kiri (Desktop collapsible sidebar) */}
+      <Sidebar
         brandName={displayBrand}
+        activeMenu={activeMenu}
+        collapsed={sidebarCollapsed}
+        isAuthenticated={isAuthenticated}
         profile={activeProfile}
-        isLoggingIn={isLoggingIn}
-        onGoogleLogin={() => handleGoogleLogin('auto')}
-        onOpenAccount={() => setLainnyaTab('account')}
+        onSelectMenu={handleSelectMenu}
+        onToggleCollapse={() => setSidebarCollapsed((prev) => !prev)}
       />
 
-      <main className="flex-1">
-        <HeroOverview
-          currentBalance={currentBalance}
-          totalExpense={summary.totalExpense}
-          totalIncome={summary.totalIncome}
-          netCashflow={summary.netCashflow}
-          transactionCount={summary.count}
-          rangeLabel={rangeLabel}
-          onOpenBalanceModal={handleOpenBalanceModal}
-          onOpenNewTransaction={() => {
-            setEditingTransaction(null);
-            setTxModalOpen(true);
-          }}
-        />
-
-        <CashflowCharts
-          transactions={filteredTransactions}
-          range={activeRange}
-          rangeLabel={rangeLabel}
-        />
-
-        <LedgerSheet
-          transactions={filteredTransactions}
-          balanceLogs={store.balanceLogs}
-          activeRange={activeRange}
-          rangeLabel={rangeLabel}
-          searchQuery={searchQuery}
-          totalExpense={summary.totalExpense}
-          totalIncome={summary.totalIncome}
-          netCashflow={summary.netCashflow}
-          currentBalance={currentBalance}
-          onRangeChange={setActiveRange}
-          onSearchChange={setSearchQuery}
-          onAddQuickTransaction={handleSaveTransaction}
-          onEditTransaction={(tx) => {
-            setEditingTransaction(tx);
-            setTxModalOpen(true);
-          }}
-          onRequestDeleteTransaction={(tx) => setPendingDeleteTx(tx)}
-          onEditBalanceLog={handleEditBalanceLog}
-          onExportExcel={handleExportExcel}
-          onExportPDF={handleExportPDF}
-          onOpenGoogleSheets={() => setLainnyaTab('sheets')}
-        />
-
-        <LainnyaSection
-          activeTab={lainnyaTab}
-          onTabChange={setLainnyaTab}
+      {/* Tab Kanan (Main Content Workspace + Mobile Chrome) */}
+      <div className="flex-1 min-w-0 flex flex-col min-h-screen">
+        <TopBar
           brandName={displayBrand}
-          onUpdateBrandName={handleUpdateBrandName}
           profile={activeProfile}
-          isAuthenticated={Boolean(user || savedAccount)}
-          hasToken={hasToken}
           isLoggingIn={isLoggingIn}
-          spreadsheetId={store.spreadsheetId}
-          spreadsheetTitle={store.spreadsheetTitle}
-          sheetTabName={store.sheetTabName}
-          availableTabs={availableTabs}
-          lastSyncedAt={store.lastSyncedAt}
-          isBusy={sheetsBusy}
-          statusMessage={sheetsStatus}
-          errorMessage={sheetsError}
-          onGoogleLogin={() => handleGoogleLogin('auto')}
-          onSwitchAccount={() => handleGoogleLogin('select_account')}
-          onReconsentSheets={() => handleGoogleLogin('consent')}
-          onGoogleLogout={handleGoogleLogout}
-          onConnectSpreadsheet={handleConnectSpreadsheet}
-          onCreateSpreadsheet={handleCreateSpreadsheet}
-          onSelectTab={(tab) =>
-            setStore((prev) => ({ ...prev, sheetTabName: tab }))
-          }
-          onPullFromSheet={handlePullFromSheet}
-          onRequestPushToSheet={() => setConfirmSheetPushOpen(true)}
+          onGoogleLogin={() => handleGoogleLogin(false)}
+          onOpenGrafik={() => handleSelectMenu('grafik')}
+          onOpenAccount={() => handleSelectMenu('akun')}
         />
-      </main>
 
-      <footer className="border-t border-white/[0.06] py-6 pb-20 md:pb-6 px-4 sm:px-8 text-center text-xs text-slate-500">
-        {displayBrand} — Pembukuan Pengeluaran, Pemasukan, Saldo & Sinkronisasi Google Sheets
-      </footer>
+        <main className="flex-1">
+          {activeMenu === 'grafik' && (
+            <>
+              <HeroOverview
+                currentBalance={currentBalance}
+                totalExpense={summary.totalExpense}
+                totalIncome={summary.totalIncome}
+                netCashflow={summary.netCashflow}
+                transactionCount={summary.count}
+                activeRange={activeRange}
+                rangeLabel={rangeLabel}
+                isLocked={isLocked}
+                onRangeChange={(range) => {
+                  if (requireAuthOrRedirect()) setActiveRange(range);
+                }}
+                onOpenBalanceModal={handleOpenBalanceModal}
+                onOpenNewTransaction={() => {
+                  if (!requireAuthOrRedirect()) return;
+                  setEditingTransaction(null);
+                  setTxModalOpen(true);
+                }}
+              />
 
-      <MobileBottomNav />
+              <CashflowCharts
+                transactions={filteredTransactions}
+                range={activeRange}
+                rangeLabel={rangeLabel}
+              />
+            </>
+          )}
+
+          {activeMenu === 'tabel' && (
+            <LedgerSheet
+              transactions={filteredTransactions}
+              balanceLogs={effectiveStore.balanceLogs}
+              activeRange={activeRange}
+              rangeLabel={rangeLabel}
+              searchQuery={searchQuery}
+              totalExpense={summary.totalExpense}
+              totalIncome={summary.totalIncome}
+              netCashflow={summary.netCashflow}
+              currentBalance={currentBalance}
+              isLocked={isLocked}
+              onRangeChange={(range) => {
+                if (requireAuthOrRedirect()) setActiveRange(range);
+              }}
+              onSearchChange={(q) => {
+                if (requireAuthOrRedirect()) setSearchQuery(q);
+              }}
+              onAddQuickTransaction={handleSaveTransaction}
+              onEditTransaction={(tx) => {
+                if (!requireAuthOrRedirect()) return;
+                setEditingTransaction(tx);
+                setTxModalOpen(true);
+              }}
+              onRequestDeleteTransaction={(tx) => {
+                if (!requireAuthOrRedirect()) return;
+                setPendingDeleteTx(tx);
+              }}
+              onEditBalanceLog={handleEditBalanceLog}
+              onExportExcel={handleExportExcel}
+              onExportPDF={handleExportPDF}
+              onOpenAccount={() => handleSelectMenu('akun')}
+            />
+          )}
+
+          {activeMenu === 'akun' && (
+            <AccountPanel
+              profile={activeProfile}
+              isLoggingIn={isLoggingIn}
+              authError={authError}
+              onGoogleLogin={() => handleGoogleLogin(false)}
+              onSwitchAccount={() => handleGoogleLogin(true)}
+              onGoogleLogout={handleGoogleLogout}
+            />
+          )}
+
+          {activeMenu === 'personalisasi' && (
+            <PersonalizationPanel
+              brandName={displayBrand}
+              isLocked={isLocked}
+              onUpdateBrandName={handleUpdateBrandName}
+            />
+          )}
+        </main>
+
+        <footer className="border-t border-[#EFF8FF]/[0.08] py-6 pb-20 md:pb-6 px-4 sm:px-8 text-center text-xs text-[#EFF8FF]/45">
+          {displayBrand} — Pembukuan Pengeluaran, Pemasukan, Grafik & Manajemen Saldo
+        </footer>
+      </div>
+
+      <MobileBottomNav
+        activeMenu={activeMenu}
+        onSelectMenu={handleSelectMenu}
+      />
 
       {/* Modals */}
       <BalanceModal
-        open={balanceModalOpen}
+        open={!isLocked && balanceModalOpen}
         initialMode={balanceModalMode}
         currentBalance={currentBalance}
         editingLog={editingBalanceLog}
@@ -740,7 +700,7 @@ export default function App() {
       />
 
       <TransactionModal
-        open={txModalOpen}
+        open={!isLocked && txModalOpen}
         editingTransaction={editingTransaction}
         onClose={() => {
           setTxModalOpen(false);
@@ -750,7 +710,7 @@ export default function App() {
       />
 
       <ConfirmDialog
-        open={Boolean(pendingDeleteTx)}
+        open={!isLocked && Boolean(pendingDeleteTx)}
         title="Hapus Transaksi?"
         description={
           pendingDeleteTx
@@ -765,26 +725,6 @@ export default function App() {
         onCancel={() => setPendingDeleteTx(null)}
       />
 
-      <ConfirmDialog
-        open={confirmSheetPushOpen}
-        title="Sinkronkan Data ke Google Sheets?"
-        description={`Tindakan ini akan memperbarui isi tab "${store.sheetTabName}" pada spreadsheet "${
-          store.spreadsheetTitle || store.spreadsheetId
-        }" dengan data pembukuan Anda saat ini.`}
-        details={[
-          `Total baris transaksi yang akan ditulis: ${store.transactions.length} baris`,
-          `Saldo kas saat ini: ${formatRupiah(currentBalance)}`,
-          availableTabs.includes('RingkasanSaldo')
-            ? `Tab "RingkasanSaldo" juga akan diperbarui (${store.balanceLogs.length} riwayat saldo)`
-            : 'Tab target akan disusun ulang sesuai data terbaru',
-        ]}
-        confirmLabel="Ya, Perbarui Google Sheet"
-        tone="primary"
-        isLoading={sheetsBusy}
-        onConfirm={handleConfirmPushToSheet}
-        onCancel={() => setConfirmSheetPushOpen(false)}
-      />
-
       {/* Toast Feedback */}
       <AnimatePresence>
         {toastMessage && (
@@ -794,10 +734,10 @@ export default function App() {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 12, scale: 0.96 }}
             transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-            className="fixed bottom-18 md:bottom-5 left-4 right-4 sm:left-auto sm:right-5 z-50 flex items-center gap-2.5 rounded-2xl bg-[#161920] border border-[#97F017]/40 px-4 py-3 text-xs font-semibold text-white shadow-2xl"
+            className="fixed bottom-18 md:bottom-5 left-4 right-4 sm:left-auto sm:right-5 z-50 flex items-center gap-2.5 rounded-2xl bg-[#150A0B] border border-[#BBEF1F]/45 px-4 py-3 text-xs font-semibold text-[#EFF8FF] shadow-2xl"
           >
             <CheckCircle2
-              className="w-4 h-4 text-[#97F017] shrink-0"
+              className="w-4 h-4 text-[#BBEF1F] shrink-0"
               aria-hidden="true"
             />
             <span>{toastMessage}</span>
